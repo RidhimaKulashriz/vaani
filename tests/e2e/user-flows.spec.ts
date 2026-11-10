@@ -67,12 +67,13 @@ test("sensitive OTP scenario stops for the human rather than repeating secret in
 
 test("home and demo remain usable without horizontal scrolling at 390px", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const route of ["/", "/demo"]) {
+  for (const route of ["/", "/demo", "/app"]) {
     await page.goto(route);
     await expect(page.locator("main")).toBeVisible();
     const widths = await page.evaluate(() => ({ viewport: window.innerWidth, content: document.documentElement.scrollWidth }));
     expect(widths.content, `${route} overflows ${widths.viewport}px viewport`).toBeLessThanOrEqual(widths.viewport);
   }
+  await page.goto("/demo");
   await expect(page.getByRole("status")).toHaveText("INITIATED");
   await expect(page.getByRole("button", { name: /Review task/ })).toBeEnabled();
 });
@@ -125,4 +126,16 @@ test("mock microphone sends only voice-gated PCM16 frames and clearly reports no
   await expect(micStatus).toContainText("not transcribed");
   await page.getByRole("button", { name: "Stop microphone" }).click();
   await expect(micStatus).toContainText("Microphone stopped. Audio frames were not recorded.");
+});
+
+
+test("private app requires configured OAuth and does not offer a synthetic account", async ({ page }) => {
+  await page.route("**/api/auth/me", (route) => route.fulfill({ json: { authenticated: false, user: null } }));
+  await page.route("**/api/auth/start", (route) => route.fulfill({ status: 503, json: { error: "oauth_unavailable", message: "Account sign-in is not configured in this environment." } }));
+  await page.goto("/app");
+  await expect(page.getByRole("heading", { name: /Your calls, your control/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Sign in with account/ })).toBeEnabled();
+  await page.getByRole("button", { name: /Sign in with account/ }).click();
+  await expect(page.locator(".app-error")).toContainText("Account sign-in is not configured");
+  await expect(page.getByRole("link", { name: /Open public mock demo/ })).toBeVisible();
 });

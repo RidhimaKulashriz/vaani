@@ -32,7 +32,7 @@ See [`docs/architecture.md`](docs/architecture.md) and [`design-spec.md`](design
 
 ## Configuration and real providers
 
-`.env.example` contains placeholders only. Local mode needs no vendor keys. External provider adapters are intentionally not enabled as production integrations: do not set `EXTERNAL_CALLS_ENABLED=true` or connect a real telephony provider from this prototype. The `/app` route remains logged out until a supported account OAuth flow is configured and verified end-to-end. For a future coordinated test environment, configure storage, authentication, provider credentials and explicit operator controls first.
+`.env.example` contains placeholders only. Local mode needs no vendor keys. External provider adapters are intentionally not enabled as production integrations: do not set `EXTERNAL_CALLS_ENABLED=true` or connect a real telephony provider from this prototype. The private `/app` dashboard is wired to authenticated task, simulated-call, WebSocket control, and history APIs, but it remains logged out until supported account OAuth is configured; this environment has not verified that provider flow. No synthetic login or production auth bypass is included. For a future coordinated test environment, configure storage, authentication, provider credentials and explicit operator controls first.
 
 Provider endpoints, telecom onboarding, Indian numbering/DLT requirements, privacy disclosures, consent, retention/deletion and local legal requirements must be reviewed for the actual operating model. This project makes no compliance claim and the legal pages are prototype notices, not legal advice or production terms.
 
