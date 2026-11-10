@@ -22,7 +22,7 @@ Useful commands: `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm --filter @vaa
 - `apps/web`: Next.js App Router public pages `/`, `/demo`, `/app`, `/privacy`, and `/terms`; custom HTTP/WebSocket proxy server.
 - `apps/api`: Fastify REST, authentication routes, session WebSockets, mock orchestration, metrics, rate limiting.
 - `packages/protocol`: Zod client/server WebSocket schemas and call states.
-- `packages/audio`: G.711 μ-law conversion, 20 ms frame helpers, jitter buffer.
+- `packages/audio`: G.711 μ-law conversion, 20 ms frame helpers, sequence jitter buffer, and a monotonic 20 ms frame pacer with an interruptible flush. The pacer is a tested primitive; no live provider audio path is connected.
 - `packages/adapters`: STT, planner, TTS, and telephony interfaces plus mock implementations.
 - `packages/orchestrator`: scripted scenarios, state machine, and PII redaction.
 - `packages/storage`: SQLite/PostgreSQL storage interface and schema initialization.

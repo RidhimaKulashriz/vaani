@@ -1,18 +1,21 @@
 # Test report
 
-Recorded during the resumed sandbox run on 2026-11-10. This is a development-container snapshot; it is not a production or telephony certification.
+Recorded during the resumed sandbox run on 2026-11-10. This is a development-container snapshot; it is not production, real-audio, or telephony certification.
 
 ## Passed
 
-- `pnpm lint` — pass (ESLint, zero warnings).
-- `pnpm typecheck` — pass (strict TypeScript workspace configuration).
-- `pnpm test` — pass, 2 files / 6 tests: μ-law/audio utilities and selected state-machine cases.
-- `pnpm simulate:100` — pass, 100 deterministic replays of six scripted scenario state sequences; 466 accepted transitions; each run ended in `ENDED`; 0 calls placed. This harness validates only scripted state transitions, not external provider or full HTTP call flows.
-- `pnpm --filter @vaani/web build` — pass; statically generated `/`, `/app`, `/demo`, `/privacy`, `/terms`, `/robots.txt`, and `/sitemap.xml`.
-- `pnpm verify` — pass, including lint, typecheck, unit tests, deterministic simulator, and production build.
+- `pnpm lint` — pass with zero warnings.
+- `pnpm typecheck` — pass for the strict TypeScript workspace.
+- `pnpm test:unit` — pass, 4 files / 13 tests: μ-law/frame helpers, sequence jitter buffering, monotonic frame pacing and flush behavior, and selected call-state transitions.
+- `pnpm simulate:100` — pass, 100 deterministic replays across six scripted call-state scenarios; 466 accepted transitions. This harness validates scripted state sequences only, not full HTTP calls or external providers.
+- `pnpm build` — pass; the production build statically generated `/`, `/app`, `/demo`, `/privacy`, `/terms`, `/robots.txt`, and `/sitemap.xml`.
+- `pnpm test:e2e` — pass, 5 Playwright browser tests covering language toggle, journey controls, consented waitlist submission, demo WebSocket/Whisper/patch-in/end, OTP-safe handoff, and mobile-width overflow.
+- Playwright axe audit — pass on the home and demo routes with no critical or serious violations.
 - Local HTTP smoke — `GET /health`, `/`, `/demo`, and `/manus-routes.json` returned 200; waitlist POST with valid email and `consent:true` returned 201.
-- Local public WebSocket smoke — session ready/state and scripted IVR transcript arrived after `demo.start`; test confirmed mock mode and did not place a call.
+- Local public WebSocket smoke — session-ready/state and scripted IVR transcript arrived after `demo.start`; this was mock mode and placed no call.
 
-## Not measured / not covered
+The audio pacer tests use an injected monotonic clock to verify 20 ms target deadlines and a simulated callback delay. They do not measure operating-system scheduling accuracy or real audio latency. `AudioFramePacer` is a reusable package primitive; a production/live carrier audio path is not connected.
 
-No Lighthouse run, axe audit, Playwright browser suite, load test, production deployment test, live-provider test, latency distribution, speech-recognition WER, 100 live HTTP/WebSocket scenario sessions, telephony barge-in timing, consented recording, or warm-transfer reliability measurement was performed. Do not infer those results from the unit suite or deterministic state replay.
+## Not measured or not covered
+
+No Lighthouse score, load test, production deployment, live STT/TTS/telephony integration, real call, physical-device microphone capture, speech-recognition WER, latency distribution, live barge-in timing, consented recording, or warm-transfer reliability measurement was performed. Docker Compose was not runtime-tested. The 100 deterministic simulator runs are not 100 full end-to-end call sessions. Treat performance targets as unmeasured, not achieved.
