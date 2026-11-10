@@ -1,0 +1,29 @@
+{
+  "name": "@vaani/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.5",
+    "@fastify/websocket": "11.3.7",
+    "@vaani/adapters": "workspace:*",
+    "@vaani/audio": "workspace:*",
+    "@vaani/orchestrator": "workspace:*",
+    "@vaani/protocol": "workspace:*",
+    "@vaani/storage": "workspace:*",
+    "fastify": "5.12.8",
+    "ioredis": "6.0.0",
+    "jose": "6.2.17",
+    "tsx": "4.23.15",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3"
+  }
+}

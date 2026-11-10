@@ -1,0 +1,9 @@
+{
+  "routes": [
+    { "path": "/", "title": "Vaani-Dalal — Voice, with you in control" },
+    { "path": "/demo", "title": "Simulated call demo — Vaani-Dalal" },
+    { "path": "/app", "title": "Your call workspace — Vaani-Dalal" },
+    { "path": "/privacy", "title": "Privacy — Vaani-Dalal" },
+    { "path": "/terms", "title": "Terms — Vaani-Dalal" }
+  ]
+}

@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+.next
+**/.next
+.git
+**/.git
+.env
+.env.*
+!.env.example
+**/data
+**/coverage
+*.tsbuildinfo
+npm-debug.log
+pnpm-debug.log

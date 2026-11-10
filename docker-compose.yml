@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vaani
+      POSTGRES_USER: vaani
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-only-change-me}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vaani -d vaani"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    environment:
+      API_PORT: 4001
+      APP_DATABASE_URL: postgres://vaani:${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/vaani
+      REDIS_URL: redis://redis:6379
+      DATA_DIR: /app/data
+      EXTERNAL_CALLS_ENABLED: "false"
+      TELEPHONY_PROVIDER: mock
+      STT_PROVIDER: mock
+      PLANNER_PROVIDER: mock
+      PII_HASH_SECRET: ${PII_HASH_SECRET:-local-development-only-change-this-secret}
+      PUBLIC_APP_ORIGIN: ${PUBLIC_APP_ORIGIN:-http://localhost:3000}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 8s
+      timeout: 3s
+      retries: 15
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    environment:
+      PORT: 3000
+      API_ORIGIN: http://api:4001
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ["3000:3000"]
+volumes:
+  postgres-data:
+  redis-data:

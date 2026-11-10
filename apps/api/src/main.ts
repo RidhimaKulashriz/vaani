@@ -1,0 +1,36 @@
+import Fastify from "fastify";
+import cookie from "@fastify/cookie";
+import websocket from "@fastify/websocket";
+import { openAppStore } from "@vaani/storage";
+import { createRuntimeStore } from "./services/runtime-store.js";
+import { MetricsRegistry } from "./services/metrics.js";
+import { SessionHub, type ApiContext } from "./types.js";
+import { registerAuthRoutes } from "./auth/routes.js";
+import { registerWaitlistRoutes } from "./routes/waitlist.js";
+import { registerTaskRoutes } from "./routes/tasks.js";
+import { registerCallRoutes } from "./routes/calls.js";
+import { registerWebSocketRoutes } from "./routes/websocket.js";
+
+const server = Fastify({ logger: { redact: ["req.headers.authorization", "req.headers.cookie"] }, bodyLimit: 1_000_000, trustProxy: false });
+const store = await openAppStore();
+const context: ApiContext = { store, runtime: await createRuntimeStore(), metrics: new MetricsRegistry(), sessions: new SessionHub() };
+await server.register(cookie);
+await server.register(websocket, { options: { maxPayload: 64 * 1024 } });
+server.addHook("onRequest", async (request) => { request.headers["x-request-start"] = String(Date.now()); });
+server.addHook("onResponse", async (request) => {
+  const started = Number(request.headers["x-request-start"] ?? Date.now());
+  context.metrics.incrementRequest(request.method);
+  context.metrics.observeRequest(request.method, (Date.now() - started) / 1000);
+});
+server.get("/health", async () => ({ ok: true, mode: "mock", database: store.driver }));
+server.get("/metrics", async (_request, reply) => reply.type("text/plain; version=0.0.4; charset=utf-8").send(context.metrics.render()));
+registerAuthRoutes(server, store);
+registerWaitlistRoutes(server, context);
+registerTaskRoutes(server, context);
+registerCallRoutes(server, context);
+registerWebSocketRoutes(server, context);
+const port = Number(process.env.API_PORT ?? 4001);
+await server.listen({ host: "0.0.0.0", port });
+server.log.info({ port, mode: "mock" }, "Vaani API ready; real telephony is disabled");
+const shutdown = async () => { await server.close(); await context.runtime.close?.(); await store.close(); process.exit(0); };
+process.on("SIGINT", () => void shutdown()); process.on("SIGTERM", () => void shutdown());
