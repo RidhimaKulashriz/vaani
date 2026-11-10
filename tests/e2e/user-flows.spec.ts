@@ -111,3 +111,18 @@ test("server rejects a tampered sensitive objective sent directly over the demo 
   }));
   expect(rejection).toEqual({ type: "error", code: "sensitive_detail_not_allowed" });
 });
+
+
+test("mock microphone sends only voice-gated PCM16 frames and clearly reports no transcription", async ({ page }) => {
+  await page.context().grantPermissions(["microphone"]);
+  await page.goto("/demo");
+  await expect(page.getByRole("status")).toHaveText("INITIATED");
+  await confirmMockTask(page);
+  await page.getByRole("button", { name: "Start microphone frame test" }).click();
+  const micStatus = page.locator(".mic-status");
+  await expect(micStatus).toContainText("Microphone active");
+  await expect(micStatus).toContainText("Audio reached the mock client path", { timeout: 8_000 });
+  await expect(micStatus).toContainText("not transcribed");
+  await page.getByRole("button", { name: "Stop microphone" }).click();
+  await expect(micStatus).toContainText("Microphone stopped. Audio frames were not recorded.");
+});

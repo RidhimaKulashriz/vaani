@@ -14,7 +14,7 @@ export default defineConfig({
     headless: true,
     viewport: { width: 1440, height: 900 },
     trace: "retain-on-failure",
-    ...(chromium ? { launchOptions: { executablePath: chromium, args: ["--no-sandbox"] } } : {}),
+    ...(chromium ? { launchOptions: { executablePath: chromium, args: ["--no-sandbox", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] } } : {}),
   },
   webServer: {
     command: "pnpm dev",

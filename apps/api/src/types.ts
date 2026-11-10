@@ -20,6 +20,7 @@ export interface LiveCallSession {
   started: boolean;
   finished: boolean;
   lastAudioAckAt: number;
+  lastAudioSeq: number;
 }
 
 export interface ApiContext {

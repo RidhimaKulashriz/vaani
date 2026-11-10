@@ -13,6 +13,15 @@ const SCENARIO_LABELS: Record<DemoScenario, string> = {
   otp_request: "sensitive-step handoff",
 };
 
+function bufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+  }
+  return btoa(binary);
+}
+
 export default function Demo() {
   const [state, setState] = useState("INITIATED");
   const [lines, setLines] = useState<Line[]>([INITIAL_LINE]);
@@ -24,10 +33,20 @@ export default function Demo() {
   const [reviewed, setReviewed] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [whisper, setWhisper] = useState("");
+  const [micActive, setMicActive] = useState(false);
+  const [micStatus, setMicStatus] = useState("Microphone is off. Audio is never recorded.");
   const [started, setStarted] = useState(false);
   const [version, setVersion] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const muteNodeRef = useRef<GainNode | null>(null);
+  const micActiveRef = useRef(false);
+  const audioSequenceRef = useRef(0);
+  const micStatusUpdateRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -47,6 +66,8 @@ export default function Demo() {
           setLines((previous) => [...previous, { speaker: event.speaker as string, text: event.text as string }]);
         } else if (event.type === "agent.say" && typeof event.text === "string") {
           setLines((previous) => [...previous, { speaker: event.to === "user" ? "AGENT → YOU" : "AGENT → BUSINESS", text: event.text as string }]);
+        } else if (event.type === "whisper.ack" && event.audio === true && typeof event.text === "string") {
+          setMicStatus(event.text as string);
         } else if (event.type === "whisper.ack" && typeof event.text === "string") {
           setLines((previous) => [...previous, { speaker: "PRIVATE WHISPER", text: event.text as string }]);
         } else if (event.type === "summary" && typeof event.text === "string") {
@@ -93,6 +114,88 @@ export default function Demo() {
     return true;
   }, []);
 
+  const stopMicrophone = useCallback(() => {
+    micActiveRef.current = false;
+    if (workletNodeRef.current) {
+      workletNodeRef.current.port.onmessage = null;
+      workletNodeRef.current.port.close();
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current = null;
+    }
+    sourceNodeRef.current?.disconnect();
+    sourceNodeRef.current = null;
+    muteNodeRef.current?.disconnect();
+    muteNodeRef.current = null;
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+    const audioContext = audioContextRef.current;
+    audioContextRef.current = null;
+    if (audioContext && audioContext.state !== "closed") void audioContext.close().catch(() => undefined);
+    setMicActive(false);
+    setMicStatus("Microphone stopped. Audio frames were not recorded.");
+  }, []);
+
+  async function startMicrophone() {
+    if (!navigator.mediaDevices?.getUserMedia || !window.isSecureContext) {
+      setMicStatus("Microphone capture requires a secure browser context and microphone permission.");
+      return;
+    }
+    setMicStatus("Requesting microphone permission. No audio will be saved.");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false,
+      });
+      mediaStreamRef.current = stream;
+      const audioContext = new AudioContext({ latencyHint: "interactive" });
+      audioContextRef.current = audioContext;
+      await audioContext.audioWorklet.addModule("/pcm16-capture.worklet.js");
+      const source = audioContext.createMediaStreamSource(stream);
+      sourceNodeRef.current = source;
+      const worklet = new AudioWorkletNode(audioContext, "vaani-pcm16-capture", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        channelCount: 1,
+        channelCountMode: "explicit",
+      });
+      workletNodeRef.current = worklet;
+      const mute = audioContext.createGain();
+      mute.gain.value = 0;
+      muteNodeRef.current = mute;
+
+      worklet.port.onmessage = (message: MessageEvent<{ pcm16?: ArrayBuffer; rms?: number }>) => {
+        if (!micActiveRef.current || !message.data.pcm16 || (message.data.rms ?? 0) < 0.018) return;
+        const socket = socketRef.current;
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        socket.send(JSON.stringify({
+          type: "whisper.audio",
+          seq: audioSequenceRef.current,
+          pcm16: bufferToBase64(message.data.pcm16),
+        }));
+        audioSequenceRef.current += 1;
+        const now = Date.now();
+        if (now - micStatusUpdateRef.current > 1_000) {
+          micStatusUpdateRef.current = now;
+          setMicStatus("Voice activity detected; 20 ms PCM16 frames are reaching the mock service. Speech recognition is off.");
+        }
+      };
+      source.connect(worklet);
+      worklet.connect(mute);
+      mute.connect(audioContext.destination);
+      await audioContext.resume();
+      audioSequenceRef.current = 0;
+      micActiveRef.current = true;
+      setMicActive(true);
+      setMicStatus("Microphone active. Local RMS voice gate sends speech-like frames only; no transcription or recording.");
+    } catch {
+      stopMicrophone();
+      setMicStatus("Microphone unavailable. Check browser permission and try again; no audio was saved.");
+    }
+  }
+
+  useEffect(() => () => stopMicrophone(), [stopMicrophone]);
+
   function reviewTask() {
     const task = objective.trim();
     if (task.length < 4) {
@@ -134,6 +237,7 @@ export default function Demo() {
   }
 
   function reset() {
+    stopMicrophone();
     setConnected(false);
     setState("INITIATED");
     setStarted(false);
@@ -147,6 +251,9 @@ export default function Demo() {
   }
 
   const canControl = connected && started && state !== "ENDED";
+  useEffect(() => {
+    if (!canControl && micActiveRef.current) stopMicrophone();
+  }, [canControl, stopMicrophone]);
 
   return (
     <main className="console-page">
@@ -207,6 +314,13 @@ export default function Demo() {
               <input id="whisper" value={whisper} onChange={(event) => setWhisper(event.target.value)} placeholder="e.g. Saturday morning, not evening" disabled={!canControl} />
               <button type="submit" disabled={!canControl || !whisper.trim()}>Send whisper ↗</button>
             </form>
+          </div>
+          <div className="mic-controls">
+            <button type="button" onClick={() => { if (micActive) stopMicrophone(); else void startMicrophone(); }} disabled={!canControl}>
+              {micActive ? "Stop microphone" : "Start microphone frame test"}
+            </button>
+            <p className="mic-status" aria-live="polite">{micStatus}</p>
+            <small>16 kHz mono PCM16 · 20 ms frames · local RMS gate · mock only</small>
           </div>
           <div className="console-actions">
             <button onClick={() => act("whisper")} disabled={!canControl || !whisper.trim()}>◉ Whisper</button>

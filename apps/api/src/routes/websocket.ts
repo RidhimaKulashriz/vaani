@@ -49,6 +49,7 @@ function createSession(userId: string | null, taskId: string | null, objective: 
     started: false,
     finished: false,
     lastAudioAckAt: 0,
+    lastAudioSeq: -1,
   };
 }
 
@@ -65,6 +66,29 @@ function parseMessage(data: unknown): ClientEvent | null {
   } catch {
     return null;
   }
+}
+
+function createAudioFrameGate(reply: SessionSubscriber): () => boolean {
+  let windowStartedAt = Date.now();
+  let frameCount = 0;
+  let notified = false;
+  return () => {
+    const now = Date.now();
+    if (now - windowStartedAt >= 1_000) {
+      windowStartedAt = now;
+      frameCount = 0;
+      notified = false;
+    }
+    if (frameCount >= 60) {
+      if (!notified) {
+        notified = true;
+        reply({ type: "error", code: "audio_rate_limited", message: "Too many microphone frames arrived. Pause briefly and try again." });
+      }
+      return false;
+    }
+    frameCount += 1;
+    return true;
+  };
 }
 
 function wireTaskEvents(context: ApiContext, userId: string, event: ClientEvent, reply: SessionSubscriber): Promise<void> {
@@ -119,7 +143,7 @@ function handleSessionMessage(
     case "task.confirm":
       return userId ? wireTaskEvents(context, userId, event, replyOnlyToThisSocket) : Promise.resolve();
     case "whisper.audio":
-      handleWhisperAudio(session, event.pcm16, replyOnlyToThisSocket);
+      handleWhisperAudio(session, event.seq, event.pcm16, replyOnlyToThisSocket);
       return Promise.resolve();
     case "whisper.text":
     case "demo.whisper":
@@ -162,6 +186,7 @@ export function registerWebSocketRoutes(server: FastifyInstance, context: ApiCon
       }
       context.metrics.setActiveMockSessions(context.sessions.activeCount());
       const replyOnlyToThisSocket: SessionSubscriber = (event) => send(socket, event);
+      const allowAudioFrame = createAudioFrameGate(replyOnlyToThisSocket);
       const unsubscribe = context.sessions.subscribe(session.snapshot.id, replyOnlyToThisSocket);
       replyOnlyToThisSocket({ type: "session.ready", mode: "mock", callId: session.snapshot.id });
       replyOnlyToThisSocket({ type: "state", value: "INITIATED", t: session.snapshot.startedAt, trigger: "session_ready" });
@@ -171,6 +196,7 @@ export function registerWebSocketRoutes(server: FastifyInstance, context: ApiCon
           replyOnlyToThisSocket({ type: "error", code: "invalid_event", message: "The event was not valid." });
           return;
         }
+        if (event.type === "whisper.audio" && !allowAudioFrame()) return;
         void handleSessionMessage(context, session, null, event, replyOnlyToThisSocket).catch(() => {
           replyOnlyToThisSocket({ type: "error", code: "demo_event_failed", message: "The mock demo could not complete that action." });
         });
@@ -201,6 +227,7 @@ export function registerWebSocketRoutes(server: FastifyInstance, context: ApiCon
       return;
     }
     const replyOnlyToThisSocket: SessionSubscriber = (event) => send(socket, event);
+    const allowAudioFrame = createAudioFrameGate(replyOnlyToThisSocket);
     const unsubscribe = context.sessions.subscribe(session.snapshot.id, replyOnlyToThisSocket);
     replyOnlyToThisSocket({ type: "session.ready", mode: "mock", callId: session.snapshot.id });
     replyOnlyToThisSocket({ type: "state", value: session.snapshot.state, t: Date.now(), trigger: "session_resume" });
@@ -212,6 +239,7 @@ export function registerWebSocketRoutes(server: FastifyInstance, context: ApiCon
         replyOnlyToThisSocket({ type: "error", code: "invalid_event", message: "The event was not valid." });
         return;
       }
+      if (event.type === "whisper.audio" && !allowAudioFrame()) return;
       void handleSessionMessage(context, session, user.id, event, replyOnlyToThisSocket).catch(() => {
         replyOnlyToThisSocket({ type: "error", code: "session_event_failed", message: "The mock session could not complete that action." });
       });

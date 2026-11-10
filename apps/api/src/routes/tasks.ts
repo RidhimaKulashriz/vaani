@@ -110,6 +110,7 @@ export function registerTaskRoutes(server: FastifyInstance, context: ApiContext)
         started: false,
         finished: false,
         lastAudioAckAt: 0,
+        lastAudioSeq: -1,
       };
       await context.store.createCall({
         id: session.snapshot.id,

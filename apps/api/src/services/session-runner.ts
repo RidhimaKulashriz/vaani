@@ -243,9 +243,14 @@ export async function handleWhisper(
 
 export function handleWhisperAudio(
   session: LiveCallSession,
+  sequence: number,
   pcm16Base64: string,
   sendToThisUser: SessionSubscriber,
 ): void {
+  if (!Number.isSafeInteger(sequence) || sequence < 0 || sequence <= session.lastAudioSeq) {
+    sendToThisUser({ type: "error", code: "audio_sequence_invalid", message: "The microphone frame sequence was stale or invalid." });
+    return;
+  }
   if (session.finished || !/^[A-Za-z0-9+/]+={0,2}$/.test(pcm16Base64)) {
     sendToThisUser({ type: "error", code: "audio_frame_invalid", message: "The microphone frame could not be accepted." });
     return;
@@ -255,6 +260,7 @@ export function handleWhisperAudio(
     sendToThisUser({ type: "error", code: "audio_frame_invalid", message: "Expected a short 16 kHz mono PCM16 frame." });
     return;
   }
+  session.lastAudioSeq = sequence;
   const now = Date.now();
   if (now - session.lastAudioAckAt > 1_000) {
     session.lastAudioAckAt = now;
