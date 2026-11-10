@@ -38,7 +38,7 @@ export const ClientEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("whisper.text"), text: safeText(240) }),
   z.object({ type: z.literal("action.patch_in") }),
   z.object({ type: z.literal("action.end") }),
-  z.object({ type: z.literal("demo.start"), scenario: DemoScenarioSchema.default("clinic_appointment") }),
+  z.object({ type: z.literal("demo.start"), scenario: DemoScenarioSchema.default("clinic_appointment"), objective: safeText(240).optional() }),
   z.object({ type: z.literal("demo.advance") }),
   z.object({ type: z.literal("demo.whisper"), text: safeText(240) }),
   z.object({ type: z.literal("ping") }),

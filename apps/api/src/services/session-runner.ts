@@ -7,6 +7,7 @@ import type { ApiContext, LiveCallSession, SessionSubscriber } from "../types.js
 const planner = new MockPlannerAdapter();
 const telephony = new MockTelephonyAdapter();
 const PRIVATE_SENSITIVE_PATTERN = /\b(otp|one[ -]?time (?:code|password)|password|passcode|cvv|cvc|upi pin|card number|bank pin|payment details|kyc|consent)\b|\b\d{4,8}\b/i;
+const DEMO_OBJECTIVE_SENSITIVE_PATTERN = /\b(otp|one[ -]?time (?:code|password)|password|passcode|cvv|cvc|upi pin|card number|bank pin|payment details|kyc|consent|medical history|diagnosis|prescription|symptoms)\b|\b\d{4,8}\b/i;
 
 function emit(context: ApiContext, session: LiveCallSession, event: ServerEvent): void {
   context.sessions.emit(session.snapshot.id, event);
@@ -94,11 +95,16 @@ export async function addTranscript(
   return text;
 }
 
-export async function startScenario(context: ApiContext, session: LiveCallSession, scenario: DemoScenario): Promise<void> {
+export async function startScenario(context: ApiContext, session: LiveCallSession, scenario: DemoScenario, objective?: string): Promise<void> {
   if (!session.isPublicDemo || session.started || session.snapshot.state !== "INITIATED") {
     emit(context, session, { type: "error", code: "scenario_already_started", message: "This mock scenario has already started." });
     return;
   }
+  if (objective && DEMO_OBJECTIVE_SENSITIVE_PATTERN.test(objective)) {
+    emit(context, session, { type: "error", code: "sensitive_detail_not_allowed", message: "Do not enter personal, medical, verification, or payment details. They are not accepted by this demo." });
+    return;
+  }
+  if (objective) session.objective = redactPii(objective).slice(0, 240);
   session.scenario = scenario;
   session.script = getDemoScript(scenario);
   session.scriptIndex = 0;

@@ -6,6 +6,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type Line = { speaker: string; text: string };
 type DemoScenario = "clinic_appointment" | "three_level_ivr" | "otp_request";
 const INITIAL_LINE: Line = { speaker: "SYSTEM", text: "Demo ready. This is a scripted simulation; no real call is placed." };
+const SENSITIVE_TASK = /\b(otp|one[ -]?time (?:code|password)|password|passcode|cvv|cvc|upi pin|card number|bank pin|payment details|kyc|consent|medical history|diagnosis|prescription|symptoms)\b|\b\d{4,8}\b/i;
+const SCENARIO_LABELS: Record<DemoScenario, string> = {
+  clinic_appointment: "clinic appointment",
+  three_level_ivr: "three-level IVR",
+  otp_request: "sensitive-step handoff",
+};
 
 export default function Demo() {
   const [state, setState] = useState("INITIATED");
@@ -13,6 +19,10 @@ export default function Demo() {
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
   const [scenario, setScenario] = useState<DemoScenario>("clinic_appointment");
+  const [objective, setObjective] = useState("Book a dermatologist appointment at Apollo Clinic, Saturday morning.");
+  const [objectiveError, setObjectiveError] = useState("");
+  const [reviewed, setReviewed] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
   const [whisper, setWhisper] = useState("");
   const [started, setStarted] = useState(false);
   const [version, setVersion] = useState(0);
@@ -44,6 +54,11 @@ export default function Demo() {
         } else if (event.type === "patch.ready") {
           setLines((previous) => [...previous, { speaker: "SYSTEM", text: "Mock patch-in bridge is ready. No real call was connected." }]);
         } else if (event.type === "error" && typeof event.message === "string") {
+          if (event.code === "sensitive_detail_not_allowed") {
+            setStarted(false);
+            setConfirmed(false);
+            setReviewed(true);
+          }
           setLines((previous) => [...previous, { speaker: "SYSTEM", text: event.message as string }]);
         }
       } catch {
@@ -78,10 +93,31 @@ export default function Demo() {
     return true;
   }, []);
 
+  function reviewTask() {
+    const task = objective.trim();
+    if (task.length < 4) {
+      setObjectiveError("Describe a routine task in at least four characters.");
+      setReviewed(false);
+      return;
+    }
+    if (SENSITIVE_TASK.test(task)) {
+      setObjectiveError("Personal, medical, verification, and payment details are not accepted in this demo.");
+      setReviewed(false);
+      return;
+    }
+    setObjectiveError("");
+    setReviewed(true);
+    setConfirmed(false);
+  }
+
   function start() {
-    if (!connected || started || busy) return;
+    if (!connected || !reviewed || started || busy) return;
     setBusy(true);
-    if (send("demo.start", { scenario })) setStarted(true);
+    if (send("demo.start", { scenario, objective: objective.trim() })) {
+      setStarted(true);
+      setConfirmed(true);
+      setReviewed(false);
+    }
     window.setTimeout(() => setBusy(false), 500);
   }
 
@@ -101,6 +137,9 @@ export default function Demo() {
     setConnected(false);
     setState("INITIATED");
     setStarted(false);
+    setConfirmed(false);
+    setReviewed(false);
+    setObjectiveError("");
     setBusy(false);
     setWhisper("");
     setLines([INITIAL_LINE]);
@@ -120,20 +159,33 @@ export default function Demo() {
         <div className="console-intro">
           <span className="eyebrow"><i className="pulse" /> SANDBOX · NO REAL CALLS</span>
           <h1>Try the<br /><i>conversation.</i></h1>
-          <p>Control a scripted appointment call. Whisper privately, patch in, or end the session at any time.</p>
+          <p>Enter a routine request, review the mock agent’s restatement, and confirm before the scripted call starts. The demo never contacts a business.</p>
+          <label htmlFor="objective">YOUR ROUTINE TASK
+            <textarea id="objective" value={objective} maxLength={240} onChange={(event) => { setObjective(event.target.value); setReviewed(false); setObjectiveError(""); }} disabled={started} />
+          </label>
+          {objectiveError && <p className="task-error" role="alert">{objectiveError}</p>}
+          <p className="task-privacy">Task text is used only by this in-memory mock session. Do not enter personal, medical, verification, or payment details.</p>
           <label htmlFor="scenario">SCENARIO
-            <select id="scenario" value={scenario} onChange={(event) => {
+            <select id="scenario" value={scenario} disabled={started} onChange={(event) => {
               setScenario(event.target.value as DemoScenario);
-              setConnected(false); setStarted(false); setState("INITIATED"); setLines([INITIAL_LINE]);
+              setConnected(false); setStarted(false); setConfirmed(false); setReviewed(false); setState("INITIATED"); setLines([INITIAL_LINE]);
             }}>
               <option value="clinic_appointment">Clinic appointment</option>
               <option value="three_level_ivr">Three-level IVR</option>
               <option value="otp_request">Sensitive request → transfer</option>
             </select>
           </label>
-          <button className="button dark" onClick={start} disabled={!connected || started || busy}>
-            {!connected ? "Connecting…" : started ? "Simulation running" : busy ? "Starting…" : "Start simulation"} <span>→</span>
-          </button>
+          {!reviewed && !started && <button className="button dark" onClick={reviewTask} disabled={!connected || busy}>
+            {!connected ? "Connecting…" : "Review task"} <span>→</span>
+          </button>}
+          {reviewed && !started && <div className="task-review" role="group" aria-label="Review and confirm mock task">
+            <span className="eyebrow">MOCK AGENT RESTATEMENT</span>
+            <p>I’ll run the {SCENARIO_LABELS[scenario]} script to demonstrate this routine request: “{objective.trim()}”. No business will be called and no reservation will be made.</p>
+            <button className="button dark" onClick={start} disabled={!connected || busy}>
+              {busy ? "Starting…" : "Confirm task and start simulation"} <span>→</span>
+            </button>
+          </div>}
+          {confirmed && <p className="confirmation-note" aria-live="polite">Task confirmed. The scripted mock call is running; no real call was placed.</p>}
           <button className="reset" onClick={reset}>Reset demo</button>
         </div>
         <div className="console" aria-label="Scripted mock call">

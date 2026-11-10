@@ -137,7 +137,7 @@ function handleSessionMessage(
         replyOnlyToThisSocket({ type: "error", code: "demo_only", message: "Choose a scenario on the public demo route." });
         return Promise.resolve();
       }
-      return startScenario(context, session, event.scenario);
+      return startScenario(context, session, event.scenario, event.objective);
   }
 }
 
