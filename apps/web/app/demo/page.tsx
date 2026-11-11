@@ -27,7 +27,10 @@ export default function Demo() {
   const [whisper, setWhisper] = useState("");
   const [started, setStarted] = useState(false);
   const [version, setVersion] = useState(0);
+  const [localMode, setLocalMode] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
+  const localModeRef = useRef(false);
+  const localTimersRef = useRef<number[]>([]);
   const transcriptRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -68,16 +71,20 @@ export default function Demo() {
         setLines((previous) => [...previous, { speaker: "SYSTEM", text: "The demo sent an unreadable event. Reset to reconnect." }]);
       }
     };
-    socket.onclose = () => { if (active) setConnected(false); };
+    socket.onclose = () => { if (active && !localModeRef.current) setConnected(false); };
     socket.onerror = () => {
       if (active) {
-        setConnected(false);
-        setLines((previous) => [...previous, { speaker: "SYSTEM", text: "Could not connect to the demo API. Check that the app server is running, then reset." }]);
+        localModeRef.current = true;
+        setLocalMode(true);
+        setConnected(true);
+        setLines((previous) => [...previous, { speaker: "SYSTEM", text: "Local browser simulation enabled. No backend or real call is required." }]);
       }
     };
     return () => {
       active = false;
       socket.close();
+      localTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      localTimersRef.current = [];
       if (socketRef.current === socket) socketRef.current = null;
     };
   }, [scenario, version]);
@@ -86,7 +93,65 @@ export default function Demo() {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
   }, [lines]);
 
+  const playLocalScript = useCallback(() => {
+    const script: [string, string][] = scenario === "three_level_ivr"
+      ? [
+          ["IVR", "Welcome. Press 1 for services."],
+          ["Agent→Callee", "[DTMF 1 sent in simulation]"],
+          ["IVR", "Press 2 for appointments."],
+          ["Agent→Callee", "[DTMF 2 sent in simulation]"],
+          ["Callee", "Reception is available. This is a simulated menu path."],
+          ["Agent→You", "The three-level menu was navigated in simulation. No telephone call occurred."],
+        ]
+      : scenario === "otp_request"
+        ? [
+            ["IVR", "For verification, please speak to reception."],
+            ["Callee", "I need a one-time verification code to continue."],
+            ["Agent→You", "A sensitive step was detected. The simulation is handing control to you."],
+            ["Agent→You", "[Mock bridge ready — no real phone line is connected]"],
+            ["Agent→You", "The sensitive step was handed to the user. No code was requested or stored."],
+          ]
+        : [
+            ["IVR", "For appointments, press 1. For opening hours, press 2."],
+            ["Agent→Callee", "[DTMF 1 sent in simulation]"],
+            ["IVR", "Please hold. An associate will be with you shortly."],
+            ["Callee", "Hello, this is the appointments desk. How can I help?"],
+            ["Agent→Callee", "Hello, I am an AI calling on the user's behalf. Could you share the next available routine appointment?"],
+            ["Callee", "There is a morning slot available next week. I can reserve it after the person confirms."],
+            ["Agent→You", "The clinic shared a possible morning slot next week. No appointment was booked in this simulation."],
+          ];
+    let delay = 250;
+    localTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    localTimersRef.current = script.map(([speaker, text]) => {
+      const timer = window.setTimeout(() => {
+        setLines((previous) => [...previous, { speaker, text }]);
+        if (speaker === "IVR") setState("IVR_NAVIGATING");
+        if (speaker === "Callee") setState("CALLEE_SPEAKING");
+        if (speaker === "Agent→Callee") setState("AGENT_SPEAKING");
+        if (speaker === "Agent→You" && text.includes("No telephone")) setState("ENDED");
+        if (speaker === "Agent→You" && text.includes("No appointment")) setState("ENDED");
+        if (speaker === "Agent→You" && text.includes("No code")) setState("ENDED");
+      }, delay += 700);
+      return timer;
+    });
+  }, [scenario]);
+
   const send = useCallback((type: string, extra: Record<string, unknown> = {}) => {
+    if (localModeRef.current) {
+      if (type === "demo.start") {
+        setState("DIALING");
+        playLocalScript();
+      } else if (type === "demo.whisper") {
+        setLines((previous) => [...previous, { speaker: "PRIVATE WHISPER", text: `Heard privately: ${String(extra.text ?? "")}` }]);
+      } else if (type === "action.patch_in") {
+        setState("PATCHED_IN");
+        setLines((previous) => [...previous, { speaker: "SYSTEM", text: "Mock patch-in bridge is ready. No real call was connected." }]);
+      } else if (type === "action.end") {
+        setState("ENDED");
+        setLines((previous) => [...previous, { speaker: "SUMMARY", text: "The local browser simulation ended safely. No telephone call was placed." }]);
+      }
+      return true;
+    }
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setLines((previous) => [...previous, { speaker: "SYSTEM", text: "The demo is not connected yet. Wait for ‘Connected’ or reset to retry." }]);
@@ -94,7 +159,7 @@ export default function Demo() {
     }
     socket.send(JSON.stringify({ type, ...extra }));
     return true;
-  }, []);
+  }, [playLocalScript]);
 
   const { active: micActive, status: micStatus, start: startMicrophone, stop: stopMicrophone, setStatus: setMicStatus } = useMockMicrophone({
     enabled: connected && started && state !== "ENDED",
@@ -143,6 +208,8 @@ export default function Demo() {
 
   function reset() {
     stopMicrophone();
+    localModeRef.current = false;
+    setLocalMode(false);
     setConnected(false);
     setState("INITIATED");
     setStarted(false);
@@ -166,7 +233,7 @@ export default function Demo() {
       </header>
       <section className="console-wrap">
         <div className="console-intro">
-          <span className="eyebrow"><i className="pulse" /> SANDBOX · NO REAL CALLS</span>
+          <span className="eyebrow"><i className="pulse" /> SANDBOX · {localMode ? "BROWSER SIMULATION" : "NO REAL CALLS"}</span>
           <h1>Try the<br /><i>conversation.</i></h1>
           <p>Enter a routine request, review the mock agent’s restatement, and confirm before the scripted call starts. The demo never contacts a business.</p>
           <label htmlFor="objective">YOUR ROUTINE TASK
