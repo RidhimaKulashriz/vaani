@@ -120,18 +120,25 @@ export default function Demo() {
             ["Callee", "There is a morning slot available next week. I can reserve it after the person confirms."],
             ["Agent→You", "The clinic shared a possible morning slot next week. No appointment was booked in this simulation."],
           ];
+    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
     let delay = 250;
     localTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     localTimersRef.current = script.map(([speaker, text]) => {
       const timer = window.setTimeout(() => {
         setLines((previous) => [...previous, { speaker, text }]);
+        if (typeof window !== "undefined" && "speechSynthesis" in window && !text.startsWith("[")) {
+          const voiceLine = new SpeechSynthesisUtterance(text);
+          voiceLine.rate = speaker === "Callee" ? 0.96 : 1;
+          voiceLine.pitch = speaker === "Callee" ? 1.08 : 0.98;
+          window.speechSynthesis.speak(voiceLine);
+        }
         if (speaker === "IVR") setState("IVR_NAVIGATING");
         if (speaker === "Callee") setState("CALLEE_SPEAKING");
         if (speaker === "Agent→Callee") setState("AGENT_SPEAKING");
         if (speaker === "Agent→You" && text.includes("No telephone")) setState("ENDED");
         if (speaker === "Agent→You" && text.includes("No appointment")) setState("ENDED");
         if (speaker === "Agent→You" && text.includes("No code")) setState("ENDED");
-      }, delay += 700);
+      }, delay += Math.max(1_200, text.length * 34));
       return timer;
     });
   }, [scenario]);
