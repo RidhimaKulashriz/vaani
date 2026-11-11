@@ -12,6 +12,8 @@ COPY packages/storage/package.json packages/storage/package.json
 RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm --filter @vaani/web build
+RUN chown -R node:node /app
 ENV NODE_ENV=production PORT=3000 API_ORIGIN=http://api:4001
+USER node
 EXPOSE 3000
 CMD ["pnpm","--filter","@vaani/web","start"]

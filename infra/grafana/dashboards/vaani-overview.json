@@ -1,0 +1,61 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "vaani-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "color": {"mode": "palette-classic"}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"showLegend": true}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "sum by (method) (rate(vaani_api_requests_total[5m]))", "legendFormat": "{{method}}", "refId": "A"}],
+      "title": "API request rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "vaani-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s", "color": {"mode": "palette-classic"}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {"legend": {"showLegend": true}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(vaani_api_request_duration_seconds_bucket[5m])))", "legendFormat": "p95 API request duration", "refId": "A"}],
+      "title": "HTTP API latency p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "vaani-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 4}]}}, "overrides": []},
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 8},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto"},
+      "targets": [{"expr": "vaani_active_mock_sessions", "legendFormat": "Active mock sessions", "refId": "A"}],
+      "title": "Active mock sessions",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "vaani-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "palette-classic"}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 18, "x": 6, "y": 8},
+      "id": 4,
+      "options": {"legend": {"showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "sum by (from, to) (rate(vaani_call_state_transitions_total[5m]))", "legendFormat": "{{from}} → {{to}}", "refId": "A"}],
+      "title": "Mock call state transition rate",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["vaani", "mock"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Vaani Local Overview",
+  "uid": "vaani-local-overview",
+  "version": 1
+}

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useMockMicrophone } from "../use-mock-microphone";
 
 type User = { id: string; email: string | null };
 type CallRow = { id: string; taskId: string; objective: string; state: string; outcome: string | null; startedAt: number; endedAt: number | null; simulated: true };
@@ -11,6 +12,44 @@ type CallDetail = CallRow & {
   transcript: { ts: number; speaker: string; text: string; lang: string }[];
 };
 type ApiError = { message?: string };
+
+function eventLabel(trigger: string): string | null {
+  const labels: Record<string, string> = {
+    ivr_detected: "IVR detected",
+    ivr_level_1: "IVR level 1",
+    ivr_level_2: "IVR level 2",
+    ivr_level_3: "IVR level 3",
+    ivr_exit: "IVR exited · mock",
+    ivr_loop_detected: "IVR loop detected",
+    loop_guard: "Loop guard triggered",
+    send_dtmf_1: "Pressed 1 · simulated",
+    send_dtmf_2: "Pressed 2 · simulated",
+    hold_prompt: "Hold prompt",
+    hold_detected: "On hold",
+    hold_timeout: "Hold limit reached · mock",
+    human_answered: "Reception answered · mock",
+    availability_shared: "Availability shared · mock",
+    ai_disclosure: "AI disclosure",
+    otp_requested: "Sensitive step requested · mock",
+    user_completed_step: "User step completed · mock",
+    remote_hangup: "Remote hangup · simulated",
+    end_requested: "Agent ending · mock",
+    mock_summary: "Mock summary received",
+    whisper_replanned: "Whisper replanned",
+    user_whisper: "Private whisper",
+    safety_handoff: "Sensitive step · user handoff",
+    mock_bridge_ready: "Mock bridge ready",
+    user_end: "Call ending",
+    hangup_complete: "Session ended",
+  };
+  return labels[trigger] ?? null;
+}
+
+function formatDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60).toString().padStart(2, "0");
+  const remainder = (seconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${remainder}`;
+}
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", ...init });
@@ -30,12 +69,30 @@ export default function AppPage() {
   const [selectedCall, setSelectedCall] = useState<CallDetail | null>(null);
   const [activeCallId, setActiveCallId] = useState("");
   const [callState, setCallState] = useState("INITIATED");
+  const [callStartedAt, setCallStartedAt] = useState(0);
+  const [clockNow, setClockNow] = useState(Date.now());
+  const [eventChips, setEventChips] = useState<string[]>([]);
   const [liveLines, setLiveLines] = useState<TranscriptLine[]>([]);
   const [whisper, setWhisper] = useState("");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [sessionConnected, setSessionConnected] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
+  const lastAudioAckAtRef = useRef(0);
+
+  const sendAudioFrame = useCallback(({ seq, pcm16 }: { seq: number; pcm16: string }) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "whisper.audio", seq, pcm16 }));
+    return true;
+  }, []);
+  const { active: micActive, status: micStatus, start: startMicrophone, stop: stopMicrophone, setStatus: setMicStatus } = useMockMicrophone({
+    enabled: authState === "ready" && sessionConnected && Boolean(activeCallId) && callState !== "ENDED",
+    onFrame: sendAudioFrame,
+  });
+  const micActiveRef = useRef(false);
+  micActiveRef.current = micActive;
 
   useEffect(() => {
     let current = true;
@@ -59,6 +116,7 @@ export default function AppPage() {
       if (active) {
         setActiveCallId((existing) => existing || active.id);
         setCallState(active.state);
+        setCallStartedAt(active.startedAt);
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Call history is unavailable.");
@@ -70,8 +128,15 @@ export default function AppPage() {
   }, [authState, refreshHistory]);
 
   useEffect(() => {
+    if (!activeCallId || !callStartedAt || callState === "ENDED") return;
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [activeCallId, callStartedAt, callState]);
+
+  useEffect(() => {
     if (!activeCallId || authState !== "ready") return;
     let active = true;
+    setSessionConnected(false);
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const socket = new WebSocket(`${scheme}://${location.host}/api/session?callId=${encodeURIComponent(activeCallId)}`);
     socketRef.current = socket;
@@ -79,13 +144,27 @@ export default function AppPage() {
       if (!active) return;
       try {
         const event = JSON.parse(String(message.data)) as Record<string, unknown>;
-        if (event.type === "state" && typeof event.value === "string") {
+        if (event.type === "session.ready") {
+          setSessionConnected(true);
+        } else if (event.type === "state" && typeof event.value === "string") {
           setCallState(event.value);
+          if (event.value === "ENDED") setClockNow(Date.now());
+          const label = typeof event.trigger === "string" ? eventLabel(event.trigger) : null;
+          if (label) setEventChips((prior) => [...prior.slice(-7), label]);
           if (event.value === "ENDED") void refreshHistory();
         } else if (event.type === "transcript" && typeof event.speaker === "string" && typeof event.text === "string") {
-          setLiveLines((prior) => [...prior, { speaker: event.speaker as string, text: event.text as string }]);
+          if (event.speaker !== "Agent→You") setLiveLines((prior) => [...prior, { speaker: event.speaker as string, text: event.text as string }]);
+        } else if (event.type === "agent.say" && event.to === "user" && typeof event.text === "string") {
+          setLiveLines((prior) => [...prior, { speaker: "AGENT→YOU", text: event.text as string }]);
+        } else if (event.type === "whisper.ack" && event.audio === true && typeof event.text === "string") {
+          if (micActiveRef.current && Date.now() - lastAudioAckAtRef.current >= 1_000) {
+            lastAudioAckAtRef.current = Date.now();
+            setMicStatus(event.text as string);
+          }
+        } else if (event.type === "whisper.ack" && typeof event.text === "string") {
+          setLiveLines((prior) => [...prior, { speaker: "AGENT→YOU · PRIVATE WHISPER", text: event.text as string }]);
         } else if (event.type === "summary" && typeof event.text === "string") {
-          setLiveLines((prior) => [...prior, { speaker: "SUMMARY", text: event.text as string }]);
+          setLiveLines((prior) => prior.at(-1)?.text === event.text ? prior : [...prior, { speaker: "SUMMARY", text: event.text as string }]);
           void refreshHistory();
         } else if (event.type === "patch.ready") {
           setNotice("Mock patch-in is ready. No real telephone line is connected.");
@@ -96,13 +175,14 @@ export default function AppPage() {
         setError("The session sent an unreadable update. Refresh call history to reconnect.");
       }
     };
-    socket.onerror = () => { if (active) setError("Could not connect to this authenticated mock session."); };
+    socket.onerror = () => { if (active) { setSessionConnected(false); setError("Could not connect to this authenticated mock session."); } };
+    socket.onclose = () => { if (active) setSessionConnected(false); };
     return () => {
       active = false;
       socket.close();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [activeCallId, authState, refreshHistory]);
+  }, [activeCallId, authState, refreshHistory, setMicStatus]);
 
   async function signIn() {
     setWorking(true);
@@ -123,6 +203,8 @@ export default function AppPage() {
     setAuthState("logged-out");
     setActiveCallId("");
     setCalls([]);
+    setCallStartedAt(0);
+    setEventChips([]);
     setTask(null);
     setConfirmed(false);
     setLiveLines([]);
@@ -163,6 +245,9 @@ export default function AppPage() {
       if (!result.simulated || result.realCallStarted) throw new Error("The app refused an unexpected non-mock call response.");
       setActiveCallId(result.callId);
       setCallState(result.state);
+      setCallStartedAt(Date.now());
+      setClockNow(Date.now());
+      setEventChips([]);
       setNotice("Simulated call created. No phone call was placed.");
       setTask(null); setConfirmed(false); setObjective("");
       await refreshHistory();
@@ -177,6 +262,8 @@ export default function AppPage() {
       return false;
     }
     socket.send(JSON.stringify({ type, ...extra }));
+    const label = type === "action.patch_in" ? "Patch-in requested · mock" : type === "action.end" ? "End requested" : type === "whisper.text" ? "Private whisper sent" : null;
+    if (label) setEventChips((prior) => [...prior.slice(-7), label]);
     return true;
   }
 
@@ -185,7 +272,11 @@ export default function AppPage() {
     try {
       const detail = await apiRequest<CallDetail>(`/api/calls/${callId}`);
       setSelectedCall(detail);
-      if (detail.state !== "ENDED" && detail.state !== "ENDING") setActiveCallId(detail.id);
+      if (detail.state !== "ENDED" && detail.state !== "ENDING") {
+        setActiveCallId(detail.id);
+        setCallState(detail.state);
+        setCallStartedAt(detail.startedAt);
+      }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Call details are unavailable."); }
   }
 
@@ -233,6 +324,8 @@ export default function AppPage() {
         </section>}
         {activeCallId && <section className="app-card app-live-call">
           <div className="app-live-heading"><div><span className="eyebrow">SIMULATED CALL · NO PHONE NETWORK</span><h2>Live mock session</h2></div><span className="state-pill is-connected" role="status">{callState.replaceAll("_", " ")}</span></div>
+          <div className="app-live-meta"><span>ELAPSED <b>{formatDuration(Math.max(0, Math.floor((clockNow - callStartedAt) / 1_000)))}</b></span><span>MOCK SESSION · REAL CALLS DISABLED</span></div>
+          {eventChips.length > 0 && <div className="app-event-chips" aria-label="Recent call events">{eventChips.map((chip, index) => <span key={`${index}-${chip}`}>{chip}</span>)}</div>}
           <div className="app-live-transcript" aria-live="polite" aria-relevant="additions text">
             {liveLines.length === 0 ? <p className="app-muted">Connecting to the private mock session…</p> : liveLines.map((line, index) => <article key={`${index}-${line.speaker}`}><b>{line.speaker}</b><p>{line.text}</p></article>)}
           </div>
@@ -240,6 +333,13 @@ export default function AppPage() {
             <label htmlFor="app-whisper">PRIVATE TEXT WHISPER · MOCK ONLY</label>
             <div><input id="app-whisper" value={whisper} onChange={(event) => setWhisper(event.target.value)} maxLength={240} placeholder="Routine correction for the mock agent" disabled={callState === "ENDED"} /><button disabled={!whisper.trim() || callState === "ENDED"}>Send</button></div>
           </form>
+          <div className="app-mic-controls">
+            <button type="button" aria-pressed={micActive} onClick={() => { if (micActive) stopMicrophone(); else void startMicrophone(); }} disabled={!sessionConnected || callState === "ENDED"}>
+              {micActive ? "Stop microphone" : "Enable private microphone"}
+            </button>
+            <p className="app-mic-status" role="status">{micStatus}</p>
+            <small>16 kHz mono PCM16 · 20 ms frames · local RMS voice gate · mock transport only. No speech recognition or recording is enabled. Use headphones to reduce echo.</small>
+          </div>
           <div className="app-call-actions">
             <button onClick={() => sendControl("action.patch_in")} disabled={callState === "ENDED"}>Patch in</button>
             <button onClick={() => sendControl("action.end")} disabled={callState === "ENDED"}>End simulated call</button>

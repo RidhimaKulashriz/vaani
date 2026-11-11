@@ -139,3 +139,86 @@ test("private app requires configured OAuth and does not offer a synthetic accou
   await expect(page.locator(".app-error")).toContainText("Account sign-in is not configured");
   await expect(page.getByRole("link", { name: /Open public mock demo/ })).toBeVisible();
 });
+
+
+test("private app mock contract renders task confirmation, call timer, microphone, private whisper, patch-in, and end", async ({ page }) => {
+  const taskId = randomUUID();
+  const callId = randomUUID();
+  const startedAt = Date.now();
+  let activeCall = false;
+  let callState = "INITIATED";
+  let audioAckSent = false;
+
+  // This is a UI-only contract test: every identity, REST response, and socket event is stubbed in-browser.
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/auth/me") return route.fulfill({ json: { authenticated: true, user: { id: "ui-contract-only", email: "test@example.invalid" } } });
+    if (path === "/api/calls" && request.method() === "GET") {
+      const calls = activeCall ? [{ id: callId, taskId, objective: "Ask about routine appointment hours", state: callState, outcome: null, startedAt, endedAt: null, simulated: true }] : [];
+      return route.fulfill({ json: calls });
+    }
+    if (path === "/api/tasks" && request.method() === "POST") return route.fulfill({ status: 201, json: { taskId, restatement: "I will ask about routine appointment hours in a simulated call.", simulatedOnly: true } });
+    if (path === `/api/tasks/${taskId}/confirm`) return route.fulfill({ json: { taskId, confirmed: true } });
+    if (path === `/api/tasks/${taskId}/start`) {
+      activeCall = true;
+      return route.fulfill({ status: 201, json: { callId, state: "INITIATED", simulated: true, realCallStarted: false } });
+    }
+    return route.continue();
+  });
+
+  await page.routeWebSocket(/\/api\/session/, (socket) => {
+    socket.send(JSON.stringify({ type: "session.ready", mode: "mock", callId }));
+    socket.send(JSON.stringify({ type: "state", value: "INITIATED", t: Date.now(), trigger: "session_resume" }));
+    socket.onMessage((raw) => {
+      const event = JSON.parse(String(raw)) as { type: string };
+      if (event.type === "whisper.text") {
+        socket.send(JSON.stringify({ type: "state", value: "USER_WHISPERING", t: Date.now(), trigger: "user_whisper" }));
+        socket.send(JSON.stringify({ type: "whisper.ack", audio: false, text: "Private direction received in the mock." }));
+        socket.send(JSON.stringify({ type: "agent.say", to: "user", text: "I heard you privately." }));
+      } else if (event.type === "whisper.audio" && !audioAckSent) {
+        audioAckSent = true;
+        socket.send(JSON.stringify({ type: "whisper.ack", audio: true, text: "Audio reached the mock client path; it was not transcribed or stored." }));
+      } else if (event.type === "action.patch_in") {
+        socket.send(JSON.stringify({ type: "state", value: "PATCHING_IN", t: Date.now(), trigger: "user_takeover" }));
+        socket.send(JSON.stringify({ type: "state", value: "PATCHED_IN", t: Date.now(), trigger: "mock_bridge_ready" }));
+        socket.send(JSON.stringify({ type: "patch.ready", joinToken: "mock-contract-token", simulated: true }));
+      } else if (event.type === "action.end") {
+        callState = "ENDED";
+        socket.send(JSON.stringify({ type: "state", value: "ENDED", t: Date.now(), trigger: "hangup_complete" }));
+        socket.send(JSON.stringify({ type: "summary", text: "This mock call ended safely.", simulated: true }));
+      }
+    });
+  });
+
+  await page.context().grantPermissions(["microphone"]);
+  await page.goto("/app");
+  await expect(page.locator("#app-objective")).toBeVisible();
+  await page.locator("#app-objective").fill("Ask about routine appointment hours");
+  await page.getByRole("button", { name: /Review task/ }).click();
+  await expect(page.locator(".app-task-review")).toContainText("simulated call");
+  await page.getByRole("button", { name: /Confirm task/ }).click();
+  await page.getByRole("button", { name: /Start simulated call/ }).click();
+  await expect(page.locator(".app-live-call")).toBeVisible();
+  await expect(page.locator(".app-live-meta")).toContainText(/\d{2}:\d{2}/);
+
+  await page.getByRole("button", { name: "Enable private microphone" }).click();
+  const micStatus = page.locator(".app-mic-status");
+  await expect(micStatus).toContainText("Microphone active");
+  await expect(micStatus).toContainText("not transcribed", { timeout: 8_000 });
+  await page.getByRole("button", { name: "Stop microphone" }).click();
+  await expect(micStatus).toContainText("frames were not recorded");
+
+  await page.locator("#app-whisper").fill("Please ask about morning availability");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".app-live-transcript")).toContainText("Private direction received in the mock.");
+  await expect(page.locator(".app-live-transcript")).toContainText("I heard you privately.");
+  await expect(page.locator(".app-event-chips")).toContainText("Private whisper");
+
+  await page.getByRole("button", { name: "Patch in" }).click();
+  await expect(page.locator(".app-event-chips")).toContainText("Mock bridge ready");
+  await expect(page.locator(".app-notice")).toContainText("No real telephone line is connected");
+  await page.getByRole("button", { name: "End simulated call" }).click();
+  await expect(page.locator(".state-pill")).toHaveText("ENDED");
+  await expect(page.locator(".app-event-chips")).toContainText("Session ended");
+});

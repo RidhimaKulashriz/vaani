@@ -11,6 +11,8 @@ COPY packages/protocol/package.json packages/protocol/package.json
 COPY packages/storage/package.json packages/storage/package.json
 RUN pnpm install --frozen-lockfile
 COPY . .
+RUN mkdir -p /app/data && chown -R node:node /app
 ENV NODE_ENV=production API_PORT=4001 DATA_DIR=/app/data EXTERNAL_CALLS_ENABLED=false
+USER node
 EXPOSE 4001
 CMD ["pnpm","--filter","@vaani/api","start"]
